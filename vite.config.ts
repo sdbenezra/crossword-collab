@@ -1,6 +1,7 @@
 import { defineConfig, loadEnv } from 'vite'
 import type { Plugin, ViteDevServer } from 'vite'
 import react from '@vitejs/plugin-react'
+import { writeFileSync } from 'node:fs'
 
 function devApiPlugin(): Plugin {
   let landingaiApiKey: string | undefined
@@ -98,8 +99,18 @@ function devApiPlugin(): Plugin {
           const data = await response.json()
           console.log('[dev-api] LandingAI response received, transforming...')
 
+          // Save raw response for debugging
+          try {
+            writeFileSync('landingai-response.json', JSON.stringify(data, null, 2))
+            console.log('[dev-api] Raw response saved to landingai-response.json')
+          } catch (e) {
+            console.warn('[dev-api] Could not save response file:', e)
+          }
+
           // Transform the response
           const puzzleData = transformLandingAIResponse(data as Record<string, unknown>)
+
+          console.log('[dev-api] Final puzzle data:', JSON.stringify(puzzleData, null, 2))
 
           res.writeHead(200, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify(puzzleData))
@@ -140,6 +151,9 @@ function transformLandingAIResponse(data: Record<string, unknown>): TransformedR
 
   const textChunks = chunks?.filter((chunk) => chunk.type === 'text') || []
 
+  console.log('[dev-api] Chunk types found:', chunks?.map(c => c.type))
+  console.log('[dev-api] Using grid chunk type:', tableChunk ? 'table' : figureChunk ? 'figure' : 'NONE')
+
   if (!gridChunk) {
     throw new Error('No crossword grid found in image')
   }
@@ -149,13 +163,18 @@ function transformLandingAIResponse(data: Record<string, unknown>): TransformedR
   if (tableChunk) {
     gridData = parseTableMarkdown(tableChunk.markdown, grounding || {})
   } else {
+    console.log('[dev-api] Figure markdown:', figureChunk!.markdown)
     gridData = parseFigureDescription(figureChunk!.markdown)
   }
 
+  console.log('[dev-api] Parsed grid data:', JSON.stringify(gridData))
+
   const cluesData = parseCluesFromText(textChunks)
+  console.log('[dev-api] Parsed clues - across:', Object.keys(cluesData.acrossClues), 'down:', Object.keys(cluesData.downClues))
 
   // If no clue numbers were extracted from the grid, derive them from clues + grid structure
   if (Object.keys(gridData.clueNumbers).length === 0) {
+    console.log('[dev-api] No clue numbers from grid, deriving from clues + structure...')
     gridData.clueNumbers = deriveCluePositions(
       gridData.gridSize,
       gridData.blackCells,
@@ -236,22 +255,53 @@ function parseFigureDescription(markdown: string) {
   const clueNumbers: Record<string, number> = {}
   const preFilledLetters: Record<string, string> = {}
 
-  // Extract description text from <::...: table::> wrapper
-  const descMatch = markdown.match(/<::(.+?):\s*table::>/s)
+  // Extract description text from <::...: (table|figure)::> wrapper
+  const descMatch = markdown.match(/<::(.+?):\s*(?:table|figure)::>/s)
   const description = descMatch ? descMatch[1] : markdown
 
-  // Extract grid size (e.g., "4x4 grid", "5 x 5 grid")
-  const sizeMatch = description.match(/(\d+)\s*x\s*(\d+)/i)
-  if (sizeMatch) {
-    gridSize[0] = parseInt(sizeMatch[1]) // width
-    gridSize[1] = parseInt(sizeMatch[2]) // height
+  console.log('[dev-api] Figure description wrapper matched:', !!descMatch)
+
+  // Try to parse structured row data (e.g., "Row 1: 1, 2, [black cell], ...")
+  const rowPattern = /Row\s+(\d+):\s*(.+)/gi
+  let rowMatch
+  const parsedRows: { cells: string[] }[] = []
+
+  while ((rowMatch = rowPattern.exec(description)) !== null) {
+    const cellsStr = rowMatch[2]
+    const cells = cellsStr.split(',').map(c => c.trim())
+    parsedRows.push({ cells })
   }
 
-  // Detect black/dark cells from description
-  const blackPattern = /(?:black|dark|filled|shaded)\s+cell[s]?\s+(?:at|in)\s+(?:row\s+(\d+).*?col(?:umn)?\s+(\d+))/gi
-  let blackMatch
-  while ((blackMatch = blackPattern.exec(description)) !== null) {
-    blackCells.push([parseInt(blackMatch[1]) - 1, parseInt(blackMatch[2]) - 1])
+  if (parsedRows.length > 0) {
+    // Grid size from actual row data
+    gridSize[0] = parsedRows[0].cells.length // width
+    gridSize[1] = parsedRows.length // height
+
+    console.log('[dev-api] Parsed', parsedRows.length, 'rows from figure description, grid:', gridSize[0], 'x', gridSize[1])
+
+    parsedRows.forEach((row, rowIdx) => {
+      row.cells.forEach((cell, colIdx) => {
+        if (/black/i.test(cell)) {
+          blackCells.push([rowIdx, colIdx])
+        }
+
+        // Extract clue number from cells like "1", "14", etc.
+        const numMatch = cell.match(/^\s*(\d+)\s*$/)
+        if (numMatch) {
+          clueNumbers[`${rowIdx},${colIdx}`] = parseInt(numMatch[1])
+        }
+      })
+    })
+
+    console.log('[dev-api] Found', blackCells.length, 'black cells and', Object.keys(clueNumbers).length, 'numbered cells')
+  } else {
+    // Fallback: try "NxN" or "N cells wide by N cells high"
+    const sizeMatch = description.match(/(\d+)\s*(?:x|cells?\s+wide\s+by)\s*(\d+)/i)
+    if (sizeMatch) {
+      gridSize[0] = parseInt(sizeMatch[1])
+      gridSize[1] = parseInt(sizeMatch[2])
+    }
+    console.log('[dev-api] No row data found, fallback grid size:', gridSize)
   }
 
   return { gridSize, blackCells, clueNumbers, preFilledLetters }
@@ -301,6 +351,9 @@ function deriveCluePositions(
   const acrossNums = Object.keys(acrossClues).map(Number).sort((a, b) => a - b)
   const downNums = Object.keys(downClues).map(Number).sort((a, b) => a - b)
 
+  console.log('[dev-api] deriveCluePositions: gridSize:', gridSize, 'acrossStarts:', acrossStarts, 'downStarts:', downStarts)
+  console.log('[dev-api] deriveCluePositions: acrossNums:', acrossNums, 'downNums:', downNums)
+
   // Map across clue numbers to their starting cells
   acrossStarts.forEach(([r, c], i) => {
     if (i < acrossNums.length) {
@@ -318,6 +371,7 @@ function deriveCluePositions(
     }
   })
 
+  console.log('[dev-api] deriveCluePositions result:', clueNumbers)
   return clueNumbers
 }
 

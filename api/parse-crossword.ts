@@ -208,22 +208,46 @@ function parseFigureDescription(markdown: string): {
   const clueNumbers: Record<string, number> = {};
   const preFilledLetters: Record<string, string> = {};
 
-  // Extract description text from <::...: table::> wrapper
-  const descMatch = markdown.match(/<::(.+?):\s*table::>/s);
+  // Extract description text from <::...: (table|figure)::> wrapper
+  const descMatch = markdown.match(/<::(.+?):\s*(?:table|figure)::>/s);
   const description = descMatch ? descMatch[1] : markdown;
 
-  // Extract grid size (e.g., "4x4 grid", "5 x 5 grid")
-  const sizeMatch = description.match(/(\d+)\s*x\s*(\d+)/i);
-  if (sizeMatch) {
-    gridSize[0] = parseInt(sizeMatch[1]); // width
-    gridSize[1] = parseInt(sizeMatch[2]); // height
+  // Try to parse structured row data (e.g., "Row 1: 1, 2, [black cell], ...")
+  const rowPattern = /Row\s+(\d+):\s*(.+)/gi;
+  let rowMatch;
+  const parsedRows: { cells: string[] }[] = [];
+
+  while ((rowMatch = rowPattern.exec(description)) !== null) {
+    const cellsStr = rowMatch[2];
+    const cells = cellsStr.split(',').map(c => c.trim());
+    parsedRows.push({ cells });
   }
 
-  // Detect black/dark cells from description
-  const blackPattern = /(?:black|dark|filled|shaded)\s+cell[s]?\s+(?:at|in)\s+(?:row\s+(\d+).*?col(?:umn)?\s+(\d+))/gi;
-  let blackMatch;
-  while ((blackMatch = blackPattern.exec(description)) !== null) {
-    blackCells.push([parseInt(blackMatch[1]) - 1, parseInt(blackMatch[2]) - 1]);
+  if (parsedRows.length > 0) {
+    // Grid size from actual row data
+    gridSize[0] = parsedRows[0].cells.length; // width
+    gridSize[1] = parsedRows.length; // height
+
+    parsedRows.forEach((row, rowIdx) => {
+      row.cells.forEach((cell, colIdx) => {
+        if (/black/i.test(cell)) {
+          blackCells.push([rowIdx, colIdx]);
+        }
+
+        // Extract clue number from cells like "1", "14", etc.
+        const numMatch = cell.match(/^\s*(\d+)\s*$/);
+        if (numMatch) {
+          clueNumbers[`${rowIdx},${colIdx}`] = parseInt(numMatch[1]);
+        }
+      });
+    });
+  } else {
+    // Fallback: try "NxN" or "N cells wide by N cells high"
+    const sizeMatch = description.match(/(\d+)\s*(?:x|cells?\s+wide\s+by)\s*(\d+)/i);
+    if (sizeMatch) {
+      gridSize[0] = parseInt(sizeMatch[1]);
+      gridSize[1] = parseInt(sizeMatch[2]);
+    }
   }
 
   return { gridSize, blackCells, clueNumbers, preFilledLetters };
