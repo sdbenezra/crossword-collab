@@ -17,6 +17,7 @@ export function CrosswordGrid({ puzzle, userId, editable = true, editMode = 'non
   const [selectedCell, setSelectedCell] = useState<{ row: number; col: number } | null>(null);
   const [direction, setDirection] = useState<'across' | 'down'>('across');
   const gridRef = useRef<HTMLDivElement>(null);
+  const hiddenInputRef = useRef<HTMLInputElement>(null);
 
   const isBlackCell = useCallback((row: number, col: number) => {
     return puzzle.blackCells?.some(([r, c]) => r === row && c === col);
@@ -57,6 +58,13 @@ export function CrosswordGrid({ puzzle, userId, editable = true, editMode = 'non
     setSelectedCell({ row: newRow, col: newCol });
   }, [selectedCell, puzzle.gridSize, isBlackCell]);
 
+  const focusInput = useCallback(() => {
+    if (hiddenInputRef.current) {
+      hiddenInputRef.current.value = '';
+      hiddenInputRef.current.focus();
+    }
+  }, []);
+
   const handleCellClick = (row: number, col: number) => {
     if (editMode === 'blackCells') {
       onToggleBlackCell?.(row, col);
@@ -77,21 +85,27 @@ export function CrosswordGrid({ puzzle, userId, editable = true, editMode = 'non
     } else {
       setSelectedCell({ row, col });
     }
+
+    focusInput();
   };
 
-  const handleKeyPress = useCallback((e: React.KeyboardEvent) => {
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (!selectedCell || !editable || !puzzle.id) return;
 
     const { row, col } = selectedCell;
 
     if (e.key.match(/^[a-zA-Z]$/)) {
+      e.preventDefault();
       updateCell(puzzle.id, row, col, e.key.toUpperCase(), userId);
       if (direction === 'across') {
         moveCell(0, 1);
       } else {
         moveCell(1, 0);
       }
+      // Clear the hidden input so next character works
+      if (hiddenInputRef.current) hiddenInputRef.current.value = '';
     } else if (e.key === 'Backspace' || e.key === 'Delete') {
+      e.preventDefault();
       updateCell(puzzle.id, row, col, '', userId);
       if (e.key === 'Backspace') {
         if (direction === 'across') {
@@ -115,6 +129,27 @@ export function CrosswordGrid({ puzzle, userId, editable = true, editMode = 'non
     } else if (e.key === 'Tab') {
       e.preventDefault();
       setDirection(d => d === 'across' ? 'down' : 'across');
+    }
+  }, [selectedCell, editable, puzzle.id, userId, direction, moveCell]);
+
+  // Mobile fallback: some virtual keyboards don't fire reliable keyDown events
+  // for letter keys, but do trigger input events on the hidden <input>.
+  const handleInput = useCallback(() => {
+    const input = hiddenInputRef.current;
+    if (!input || !selectedCell || !editable || !puzzle.id) return;
+
+    const value = input.value;
+    input.value = '';
+
+    const letter = value.replace(/[^a-zA-Z]/g, '').slice(-1);
+    if (letter) {
+      const { row, col } = selectedCell;
+      updateCell(puzzle.id, row, col, letter.toUpperCase(), userId);
+      if (direction === 'across') {
+        moveCell(0, 1);
+      } else {
+        moveCell(1, 0);
+      }
     }
   }, [selectedCell, editable, puzzle.id, userId, direction, moveCell]);
 
@@ -154,8 +189,20 @@ export function CrosswordGrid({ puzzle, userId, editable = true, editMode = 'non
       ref={gridRef}
       className="inline-block focus:outline-none"
       tabIndex={0}
-      onKeyDown={handleKeyPress}
+      onKeyDown={handleKeyDown}
     >
+      {/* Hidden input to trigger the mobile virtual keyboard */}
+      <input
+        ref={hiddenInputRef}
+        onKeyDown={handleKeyDown}
+        onInput={handleInput}
+        autoCapitalize="characters"
+        autoComplete="off"
+        autoCorrect="off"
+        spellCheck={false}
+        aria-label="Crossword input"
+        style={{ position: 'absolute', opacity: 0, width: 1, height: 1, padding: 0, border: 'none' }}
+      />
       <div
         className="grid gap-0.5 bg-gray-800 p-0.5"
         style={{
