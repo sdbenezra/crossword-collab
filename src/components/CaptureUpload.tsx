@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import { uploadImage, parseCrosswordImage } from '../services/apiService';
 import type { ParseResponse } from '../types/puzzle';
 
@@ -23,15 +23,18 @@ export function CaptureUpload({ onPuzzleExtracted }: CaptureUploadProps) {
         }
       });
 
-      if (videoRef.current) {
-        videoRef.current.srcObject = mediaStream;
-        setStream(mediaStream);
-        setError(null);
-      }
+      setStream(mediaStream);
+      setError(null);
     } catch {
       setError('Camera access denied. Please use file upload instead.');
     }
   };
+
+  useEffect(() => {
+    if (stream && videoRef.current) {
+      videoRef.current.srcObject = stream;
+    }
+  }, [stream]);
 
   const stopCamera = () => {
     if (stream) {
