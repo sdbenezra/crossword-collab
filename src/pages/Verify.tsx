@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { CrosswordGrid } from '../components/CrosswordGrid';
 import { CluesList } from '../components/CluesList';
@@ -6,11 +6,14 @@ import { createPuzzle } from '../services/puzzleService';
 import { useAuth } from '../hooks/useAuth';
 import type { PuzzleData, ParseResponse } from '../types/puzzle';
 
+type EditMode = 'none' | 'blackCells' | 'numbers';
+
 export default function Verify() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [puzzleData, setPuzzleData] = useState<ParseResponse | null>(null);
   const [saving, setSaving] = useState(false);
+  const [editMode, setEditMode] = useState<EditMode>('none');
 
   useEffect(() => {
     const stored = sessionStorage.getItem('extractedPuzzle');
@@ -20,6 +23,45 @@ export default function Verify() {
       navigate('/capture');
     }
   }, [navigate]);
+
+  const handleToggleBlackCell = useCallback((row: number, col: number) => {
+    setPuzzleData(prev => {
+      if (!prev) return prev;
+      const cellIdx = prev.blackCells.findIndex(([r, c]) => r === row && c === col);
+      let newBlackCells: [number, number][];
+      let newClueNumbers = { ...prev.clueNumbers };
+      if (cellIdx >= 0) {
+        newBlackCells = prev.blackCells.filter((_, i) => i !== cellIdx);
+      } else {
+        newBlackCells = [...prev.blackCells, [row, col]];
+        delete newClueNumbers[`${row},${col}`];
+      }
+      return { ...prev, blackCells: newBlackCells, clueNumbers: newClueNumbers };
+    });
+  }, []);
+
+  const handleEditClueNumber = useCallback((row: number, col: number) => {
+    const key = `${row},${col}`;
+    const current = puzzleData?.clueNumbers[key];
+    const input = prompt(
+      `Clue number for cell (${row}, ${col}):`,
+      current?.toString() ?? ''
+    );
+    if (input === null) return; // cancelled
+    setPuzzleData(prev => {
+      if (!prev) return prev;
+      const newClueNumbers = { ...prev.clueNumbers };
+      if (input.trim() === '') {
+        delete newClueNumbers[key];
+      } else {
+        const num = parseInt(input.trim(), 10);
+        if (!isNaN(num) && num > 0) {
+          newClueNumbers[key] = num;
+        }
+      }
+      return { ...prev, clueNumbers: newClueNumbers };
+    });
+  }, [puzzleData?.clueNumbers]);
 
   const handleConfirm = async () => {
     if (!puzzleData || !user) return;
@@ -70,9 +112,31 @@ export default function Verify() {
 
         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
           <p className="text-sm text-yellow-800">
-            Please review the extracted puzzle. The grid and clues were parsed from your image.
-            You can proceed to start solving collaboratively.
+            Review the extracted puzzle below. Use the edit buttons to correct black squares or clue numbers if needed.
           </p>
+        </div>
+
+        <div className="flex gap-2 mb-4">
+          <button
+            onClick={() => setEditMode(m => m === 'blackCells' ? 'none' : 'blackCells')}
+            className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
+              editMode === 'blackCells'
+                ? 'bg-blue-600 text-white'
+                : 'bg-gray-200 hover:bg-gray-300 text-gray-700'
+            }`}
+          >
+            {editMode === 'blackCells' ? 'Done Editing Squares' : 'Edit Black Squares'}
+          </button>
+          <button
+            onClick={() => setEditMode(m => m === 'numbers' ? 'none' : 'numbers')}
+            className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
+              editMode === 'numbers'
+                ? 'bg-blue-600 text-white'
+                : 'bg-gray-200 hover:bg-gray-300 text-gray-700'
+            }`}
+          >
+            {editMode === 'numbers' ? 'Done Editing Numbers' : 'Edit Clue Numbers'}
+          </button>
         </div>
 
         <div className="grid lg:grid-cols-2 gap-8 mb-8">
@@ -83,6 +147,9 @@ export default function Verify() {
                 puzzle={tempPuzzle}
                 userId={user?.uid || ''}
                 editable={false}
+                editMode={editMode}
+                onToggleBlackCell={handleToggleBlackCell}
+                onEditClueNumber={handleEditClueNumber}
               />
             </div>
           </div>

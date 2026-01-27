@@ -273,13 +273,36 @@ function parseFigureDescription(markdown: string) {
   }
 
   if (parsedRows.length > 0) {
-    // Grid size from actual row data
-    gridSize[0] = parsedRows[0].cells.length // width
-    gridSize[1] = parsedRows.length // height
+    const cols = parsedRows[0].cells.length
 
-    console.log('[dev-api] Parsed', parsedRows.length, 'rows from figure description, grid:', gridSize[0], 'x', gridSize[1])
+    // Detect row doubling: LandingAI sometimes interprets each grid row as two
+    // (top half with clue numbers, bottom half blank), roughly doubling the row count.
+    // Detection: numbered cells appear only on even-indexed rows, and total rows ≈ 2× columns.
+    const rowHasNumber = parsedRows.map(row =>
+      row.cells.some(c => /^\s*\d+\s*$/.test(c))
+    )
+    const evenWithNums = rowHasNumber.filter((has, i) => i % 2 === 0 && has).length
+    const oddWithNums = rowHasNumber.filter((has, i) => i % 2 === 1 && has).length
+    const isDoubled = parsedRows.length >= cols * 1.8
+      && evenWithNums > 0
+      && oddWithNums === 0
 
-    parsedRows.forEach((row, rowIdx) => {
+    console.log('[dev-api] Row doubling detection:', { totalRows: parsedRows.length, cols, evenWithNums, oddWithNums, isDoubled })
+
+    let effectiveRows: { cells: string[] }[]
+    if (isDoubled) {
+      effectiveRows = parsedRows.filter((_, i) => i % 2 === 0)
+      console.log('[dev-api] Corrected row doubling:', parsedRows.length, '→', effectiveRows.length, 'rows')
+    } else {
+      effectiveRows = parsedRows
+    }
+
+    gridSize[0] = effectiveRows[0].cells.length // width
+    gridSize[1] = effectiveRows.length // height
+
+    console.log('[dev-api] Grid dimensions:', gridSize[0], 'x', gridSize[1])
+
+    effectiveRows.forEach((row, rowIdx) => {
       row.cells.forEach((cell, colIdx) => {
         if (/black/i.test(cell)) {
           blackCells.push([rowIdx, colIdx])

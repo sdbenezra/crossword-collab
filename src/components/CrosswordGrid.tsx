@@ -1,14 +1,19 @@
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { updateCell, updateCursor, removeCursor } from '../services/puzzleService';
 import type { PuzzleData } from '../types/puzzle';
+
+type EditMode = 'none' | 'blackCells' | 'numbers';
 
 interface CrosswordGridProps {
   puzzle: PuzzleData;
   userId: string;
   editable?: boolean;
+  editMode?: EditMode;
+  onToggleBlackCell?: (row: number, col: number) => void;
+  onEditClueNumber?: (row: number, col: number) => void;
 }
 
-export function CrosswordGrid({ puzzle, userId, editable = true }: CrosswordGridProps) {
+export function CrosswordGrid({ puzzle, userId, editable = true, editMode = 'none', onToggleBlackCell, onEditClueNumber }: CrosswordGridProps) {
   const [selectedCell, setSelectedCell] = useState<{ row: number; col: number } | null>(null);
   const [direction, setDirection] = useState<'across' | 'down'>('across');
   const gridRef = useRef<HTMLDivElement>(null);
@@ -53,6 +58,17 @@ export function CrosswordGrid({ puzzle, userId, editable = true }: CrosswordGrid
   }, [selectedCell, puzzle.gridSize, isBlackCell]);
 
   const handleCellClick = (row: number, col: number) => {
+    if (editMode === 'blackCells') {
+      onToggleBlackCell?.(row, col);
+      return;
+    }
+    if (editMode === 'numbers') {
+      if (!isBlackCell(row, col)) {
+        onEditClueNumber?.(row, col);
+      }
+      return;
+    }
+
     if (!editable) return;
     if (isBlackCell(row, col)) return;
 
@@ -104,6 +120,35 @@ export function CrosswordGrid({ puzzle, userId, editable = true }: CrosswordGrid
 
   const [width, height] = puzzle.gridSize;
 
+  // Compute cells belonging to the current word (for highlighting)
+  const wordCells = useMemo(() => {
+    const cells = new Set<string>();
+    if (!selectedCell || editMode !== 'none') return cells;
+    const { row, col } = selectedCell;
+    if (isBlackCell(row, col)) return cells;
+
+    if (direction === 'across') {
+      // Walk left to find word start
+      let c = col;
+      while (c > 0 && !isBlackCell(row, c - 1)) c--;
+      // Walk right to collect all cells in the word
+      while (c < width && !isBlackCell(row, c)) {
+        cells.add(`${row},${c}`);
+        c++;
+      }
+    } else {
+      // Walk up to find word start
+      let r = row;
+      while (r > 0 && !isBlackCell(r - 1, col)) r--;
+      // Walk down to collect all cells in the word
+      while (r < height && !isBlackCell(r, col)) {
+        cells.add(`${r},${col}`);
+        r++;
+      }
+    }
+    return cells;
+  }, [selectedCell, direction, isBlackCell, width, height, editMode]);
+
   return (
     <div
       ref={gridRef}
@@ -133,6 +178,25 @@ export function CrosswordGrid({ puzzle, userId, editable = true }: CrosswordGrid
 
             const hasOtherCursor = otherCursors.length > 0;
 
+            const isInWord = wordCells.has(cellKey);
+
+            const editCellClass =
+              editMode === 'blackCells'
+                ? (black ? 'bg-black cursor-pointer hover:bg-gray-700' : 'bg-white cursor-pointer hover:bg-red-100')
+                : editMode === 'numbers'
+                  ? (black ? 'bg-black cursor-default' : 'bg-white cursor-pointer hover:bg-yellow-100')
+                  : '';
+
+            const normalCellClass = editMode === 'none'
+              ? (black
+                  ? 'bg-black cursor-default'
+                  : isSelected
+                    ? 'bg-blue-200 cursor-pointer'
+                    : isInWord
+                      ? 'bg-blue-100 cursor-pointer hover:bg-blue-150'
+                      : 'bg-white cursor-pointer hover:bg-gray-50')
+              : editCellClass;
+
             return (
               <div
                 key={cellKey}
@@ -140,12 +204,9 @@ export function CrosswordGrid({ puzzle, userId, editable = true }: CrosswordGrid
                 className={`
                   relative flex items-center justify-center text-2xl font-bold
                   transition-colors
-                  ${black
-                    ? 'bg-black cursor-default'
-                    : 'bg-white cursor-pointer hover:bg-gray-50'
-                  }
-                  ${isSelected
-                    ? 'ring-2 ring-blue-500 bg-blue-50 z-10'
+                  ${normalCellClass}
+                  ${isSelected && editMode === 'none'
+                    ? 'ring-2 ring-blue-500 z-10'
                     : ''
                   }
                   ${hasOtherCursor
@@ -168,9 +229,33 @@ export function CrosswordGrid({ puzzle, userId, editable = true }: CrosswordGrid
           })
         )}
       </div>
-      {editable && (
-        <div className="mt-2 text-xs text-gray-500 text-center">
-          Direction: {direction} (Tab to switch)
+      {editMode === 'blackCells' && (
+        <div className="mt-2 text-xs text-amber-700 text-center font-medium">
+          Click any cell to toggle black/white
+        </div>
+      )}
+      {editMode === 'numbers' && (
+        <div className="mt-2 text-xs text-amber-700 text-center font-medium">
+          Click a white cell to set or remove its clue number
+        </div>
+      )}
+      {editable && editMode === 'none' && (
+        <div className="mt-3 flex items-center justify-center gap-3">
+          <span className={`px-3 py-1 rounded-full text-sm font-semibold ${
+            direction === 'across'
+              ? 'bg-blue-600 text-white'
+              : 'bg-gray-200 text-gray-500'
+          }`}>
+            Across →
+          </span>
+          <span className={`px-3 py-1 rounded-full text-sm font-semibold ${
+            direction === 'down'
+              ? 'bg-blue-600 text-white'
+              : 'bg-gray-200 text-gray-500'
+          }`}>
+            Down ↓
+          </span>
+          <span className="text-xs text-gray-400 ml-1">(Tab to switch)</span>
         </div>
       )}
     </div>

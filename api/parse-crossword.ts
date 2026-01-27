@@ -224,11 +224,30 @@ function parseFigureDescription(markdown: string): {
   }
 
   if (parsedRows.length > 0) {
-    // Grid size from actual row data
-    gridSize[0] = parsedRows[0].cells.length; // width
-    gridSize[1] = parsedRows.length; // height
+    const cols = parsedRows[0].cells.length;
 
-    parsedRows.forEach((row, rowIdx) => {
+    // Detect row doubling: LandingAI sometimes interprets each grid row as two
+    // (top half with clue numbers, bottom half blank), roughly doubling the row count.
+    const rowHasNumber = parsedRows.map(row =>
+      row.cells.some(c => /^\s*\d+\s*$/.test(c))
+    );
+    const evenWithNums = rowHasNumber.filter((has, i) => i % 2 === 0 && has).length;
+    const oddWithNums = rowHasNumber.filter((has, i) => i % 2 === 1 && has).length;
+    const isDoubled = parsedRows.length >= cols * 1.8
+      && evenWithNums > 0
+      && oddWithNums === 0;
+
+    let effectiveRows: { cells: string[] }[];
+    if (isDoubled) {
+      effectiveRows = parsedRows.filter((_, i) => i % 2 === 0);
+    } else {
+      effectiveRows = parsedRows;
+    }
+
+    gridSize[0] = effectiveRows[0].cells.length; // width
+    gridSize[1] = effectiveRows.length; // height
+
+    effectiveRows.forEach((row, rowIdx) => {
       row.cells.forEach((cell, colIdx) => {
         if (/black/i.test(cell)) {
           blackCells.push([rowIdx, colIdx]);
