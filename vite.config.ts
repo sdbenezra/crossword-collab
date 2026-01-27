@@ -2,9 +2,19 @@ import { defineConfig, loadEnv } from 'vite'
 import type { Plugin, ViteDevServer } from 'vite'
 import react from '@vitejs/plugin-react'
 import { writeFileSync } from 'node:fs'
+import { handleUpload, type HandleUploadBody } from '@vercel/blob/client'
+
+function readBody(req: import('http').IncomingMessage): Promise<string> {
+  return new Promise<string>((resolve) => {
+    let data = ''
+    req.on('data', (chunk: Buffer) => { data += chunk.toString() })
+    req.on('end', () => resolve(data))
+  })
+}
 
 function devApiPlugin(): Plugin {
   let landingaiApiKey: string | undefined
+  let blobToken: string | undefined
 
   return {
     name: 'dev-api-middleware',
@@ -12,8 +22,49 @@ function devApiPlugin(): Plugin {
       // Load all env vars (not just VITE_-prefixed ones)
       const env = loadEnv(config.mode, process.cwd(), '')
       landingaiApiKey = env.LANDINGAI_API_KEY
+      blobToken = env.BLOB_READ_WRITE_TOKEN
     },
     configureServer(server: ViteDevServer) {
+      // Blob upload endpoint for dev
+      server.middlewares.use('/api/upload', async (req, res) => {
+        if (req.method !== 'POST') {
+          res.writeHead(405, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'Method not allowed' }))
+          return
+        }
+
+        try {
+          const body = JSON.parse(await readBody(req)) as HandleUploadBody
+
+          // Build a minimal Request-compatible object for handleUpload
+          const headers = new Headers()
+          for (const [key, value] of Object.entries(req.headers)) {
+            if (value) headers.set(key, Array.isArray(value) ? value[0] : value)
+          }
+
+          const jsonResponse = await handleUpload({
+            body,
+            request: { headers } as Request,
+            token: blobToken,
+            onBeforeGenerateToken: async () => ({
+              allowedContentTypes: ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/heic'],
+              maximumSizeInBytes: 20 * 1024 * 1024,
+            }),
+            onUploadCompleted: async () => {},
+          })
+
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify(jsonResponse))
+        } catch (error) {
+          console.error('[dev-api] Upload error:', error)
+          res.writeHead(400, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({
+            error: error instanceof Error ? error.message : 'Upload failed'
+          }))
+        }
+      })
+
+      // Parse crossword endpoint
       server.middlewares.use('/api/parse-crossword', async (req, res) => {
         if (req.method === 'OPTIONS') {
           res.writeHead(200, {
@@ -31,27 +82,20 @@ function devApiPlugin(): Plugin {
           return
         }
 
-        // Read request body
-        const body = await new Promise<string>((resolve) => {
-          let data = ''
-          req.on('data', (chunk: Buffer) => { data += chunk.toString() })
-          req.on('end', () => resolve(data))
-        })
-
-        let parsed: { imageBase64?: string }
+        let parsed: { blobUrl?: string }
         try {
-          parsed = JSON.parse(body)
+          parsed = JSON.parse(await readBody(req))
         } catch {
           res.writeHead(400, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({ error: 'Invalid JSON body' }))
           return
         }
 
-        const { imageBase64 } = parsed
+        const { blobUrl } = parsed
 
-        if (!imageBase64) {
+        if (!blobUrl) {
           res.writeHead(400, { 'Content-Type': 'application/json' })
-          res.end(JSON.stringify({ error: 'No image provided' }))
+          res.end(JSON.stringify({ error: 'No blobUrl provided' }))
           return
         }
 
@@ -65,9 +109,15 @@ function devApiPlugin(): Plugin {
         }
 
         try {
-          // Convert base64 to buffer
-          const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, '')
-          const buffer = Buffer.from(base64Data, 'base64')
+          // Fetch image from Vercel Blob Storage
+          console.log('[dev-api] Fetching image from blob:', blobUrl)
+          const imageResponse = await fetch(blobUrl)
+          if (!imageResponse.ok) {
+            res.writeHead(400, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ error: 'Failed to fetch image from blob storage' }))
+            return
+          }
+          const buffer = Buffer.from(await imageResponse.arrayBuffer())
 
           // Call LandingAI API
           const formData = new FormData()
@@ -80,7 +130,6 @@ function devApiPlugin(): Plugin {
             method: 'POST',
             headers: {
               'Authorization': `Bearer ${landingaiApiKey}`
-              // 'apiKey':`${landingaiApiKey}`
             },
             body: formData
           })

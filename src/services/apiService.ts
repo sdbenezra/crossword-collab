@@ -1,12 +1,24 @@
+import { upload } from '@vercel/blob/client';
 import type { ParseResponse } from '../types/puzzle';
 
-export async function parseCrosswordImage(imageBase64: string): Promise<ParseResponse> {
+export async function uploadImage(blob: Blob): Promise<string> {
+  const file = new File([blob], 'crossword.jpg', { type: blob.type || 'image/jpeg' });
+
+  const result = await upload(file.name, file, {
+    access: 'public',
+    handleUploadUrl: '/api/upload',
+  });
+
+  return result.url;
+}
+
+export async function parseCrosswordImage(blobUrl: string): Promise<ParseResponse> {
   const response = await fetch('/api/parse-crossword', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ imageBase64 })
+    body: JSON.stringify({ blobUrl })
   });
 
   if (!response.ok) {

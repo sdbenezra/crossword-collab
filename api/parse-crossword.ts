@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { del } from '@vercel/blob';
 
 export default async function handler(
   req: VercelRequest,
@@ -20,15 +21,18 @@ export default async function handler(
   }
 
   try {
-    const { imageBase64 } = req.body;
+    const { blobUrl } = req.body;
 
-    if (!imageBase64) {
-      return res.status(400).json({ error: 'No image provided' });
+    if (!blobUrl) {
+      return res.status(400).json({ error: 'No blobUrl provided' });
     }
 
-    // Convert base64 to blob for LandingAI
-    const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, '');
-    const buffer = Buffer.from(base64Data, 'base64');
+    // Fetch image from Vercel Blob Storage
+    const imageResponse = await fetch(blobUrl);
+    if (!imageResponse.ok) {
+      return res.status(400).json({ error: 'Failed to fetch image from blob storage' });
+    }
+    const buffer = Buffer.from(await imageResponse.arrayBuffer());
 
     // Call LandingAI API
     const formData = new FormData();
@@ -40,7 +44,6 @@ export default async function handler(
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${process.env.LANDINGAI_API_KEY}`
-        // 'apiKey':`${process.env.LANDINGAI_API_KEY}`
       },
       body: formData
     });
@@ -55,6 +58,13 @@ export default async function handler(
     }
 
     const data = await response.json();
+
+    // Clean up: delete the blob now that we've processed it
+    try {
+      await del(blobUrl);
+    } catch (delError) {
+      console.warn('Failed to delete blob (non-critical):', delError);
+    }
 
     // Transform LandingAI response to our crossword format
     const puzzleData = transformLandingAIResponse(data);

@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { parseCrosswordImage } from '../services/apiService';
+import { uploadImage, parseCrosswordImage } from '../services/apiService';
 import type { ParseResponse } from '../types/puzzle';
 
 interface CaptureUploadProps {
@@ -66,23 +66,14 @@ export function CaptureUpload({ onPuzzleExtracted }: CaptureUploadProps) {
     setError(null);
 
     try {
-      const reader = new FileReader();
-      reader.readAsDataURL(blob);
-
-      reader.onloadend = async () => {
-        try {
-          const base64String = reader.result as string;
-          const puzzleData = await parseCrosswordImage(base64String);
-          onPuzzleExtracted(puzzleData);
-          stopCamera();
-        } catch (err) {
-          setError(err instanceof Error ? err.message : 'Failed to process image');
-        } finally {
-          setProcessing(false);
-        }
-      };
+      // Upload to Vercel Blob Storage, then parse with AI
+      const blobUrl = await uploadImage(blob);
+      const puzzleData = await parseCrosswordImage(blobUrl);
+      onPuzzleExtracted(puzzleData);
+      stopCamera();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to process image');
+    } finally {
       setProcessing(false);
     }
   };
