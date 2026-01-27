@@ -178,3 +178,4 @@ The LandingAI Document Parser extracts crossword data from photos:
 6. Row-doubling detection corrects for LandingAI sometimes returning 2x the actual row count
 
 During development, the raw LandingAI response is saved to `landingai-response.json` for debugging.
+
