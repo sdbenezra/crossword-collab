@@ -2,7 +2,8 @@ import { upload } from '@vercel/blob/client';
 import type { ParseResponse } from '../types/puzzle';
 
 export async function uploadImage(blob: Blob): Promise<string> {
-  const file = new File([blob], 'crossword.jpg', { type: blob.type || 'image/jpeg' });
+  const filename = `crossword-${Date.now()}.jpg`;
+  const file = new File([blob], filename, { type: blob.type || 'image/jpeg' });
 
   const result = await upload(file.name, file, {
     access: 'public',
