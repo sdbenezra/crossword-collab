@@ -4,8 +4,5 @@
       "memory": 1024,
       "maxDuration": 30
     }
-  },
-  "env": {
-    "LANDINGAI_API_KEY": "@landingai-api-key"
   }
 }
