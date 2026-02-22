@@ -29,6 +29,7 @@ export async function createPuzzle(
   };
 
   await set(puzzleRef, newPuzzle);
+  await set(ref(db, `shareCodes/${shareCode}`), puzzleId);
   return puzzleId;
 }
 
@@ -46,17 +47,12 @@ export function subscribeToPuzzle(
 }
 
 export async function getPuzzleByShareCode(shareCode: string): Promise<PuzzleData | null> {
-  const puzzlesRef = ref(db, 'puzzles');
-  const snapshot = await get(puzzlesRef);
+  const codeSnapshot = await get(ref(db, `shareCodes/${shareCode}`));
+  if (!codeSnapshot.exists()) return null;
 
-  if (!snapshot.exists()) return null;
-
-  const puzzles = snapshot.val();
-  const puzzleEntry = Object.entries(puzzles).find(
-    ([, puzzle]) => (puzzle as PuzzleData).shareCode === shareCode
-  );
-
-  return puzzleEntry ? puzzleEntry[1] as PuzzleData : null;
+  const puzzleId = codeSnapshot.val() as string;
+  const puzzleSnapshot = await get(ref(db, `puzzles/${puzzleId}`));
+  return puzzleSnapshot.exists() ? puzzleSnapshot.val() as PuzzleData : null;
 }
 
 export async function joinPuzzle(puzzleId: string, userId: string): Promise<void> {

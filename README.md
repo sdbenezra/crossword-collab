@@ -122,7 +122,32 @@ puzzles/
       userId: { row, col, timestamp }
     collaborators/
       userId: true
+shareCodes/
+  {shareCode}: puzzleId
 ```
+
+The `shareCodes` node is a lookup index mapping each 6-character share code to its puzzle ID. This avoids needing read access to the entire `puzzles` collection when joining by code.
+
+### Security Rules
+
+```json
+{
+  "rules": {
+    "puzzles": {
+      "$puzzleId": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      }
+    },
+    "shareCodes": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    }
+  }
+}
+```
+
+All access requires Firebase Anonymous Auth, which the app establishes automatically on load.
 
 ## Deploying to Vercel
 
