@@ -69,9 +69,20 @@ export function CaptureUpload({ onPuzzleExtracted }: CaptureUploadProps) {
     setError(null);
 
     try {
-      // Upload to Vercel Blob Storage, then parse with AI
-      const blobUrl = await uploadImage(blob);
-      const puzzleData = await parseCrosswordImage(blobUrl);
+      // Check if debug mode is enabled via URL parameter
+      const urlParams = new URLSearchParams(window.location.search);
+      const debugMode = urlParams.get('debug') === 'true';
+
+      let blobUrl;
+      if (debugMode) {
+        // In debug mode, use a dummy URL
+        blobUrl = 'debug://local';
+      } else {
+        // Upload to Vercel Blob Storage
+        blobUrl = await uploadImage(blob);
+      }
+
+      const puzzleData = await parseCrosswordImage(blobUrl, debugMode);
       onPuzzleExtracted(puzzleData);
       stopCamera();
     } catch (err) {
@@ -133,6 +144,29 @@ export function CaptureUpload({ onPuzzleExtracted }: CaptureUploadProps) {
               <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
               <p className="mt-4 text-gray-600">Processing image...</p>
             </div>
+          )}
+
+          {/* Debug button - only show in dev */}
+          {typeof window !== 'undefined' && window.location.hostname === 'localhost' && (
+            <button
+              onClick={async () => {
+                const debugMode = true;
+                const blobUrl = 'debug://local';
+                try {
+                  setProcessing(true);
+                  const puzzleData = await parseCrosswordImage(blobUrl, debugMode);
+                  onPuzzleExtracted(puzzleData);
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : 'Failed to parse');
+                } finally {
+                  setProcessing(false);
+                }
+              }}
+              disabled={processing}
+              className="w-full py-4 px-6 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-400 text-white font-semibold rounded-lg transition-colors"
+            >
+              {processing ? 'Processing...' : 'Debug: Use Local JSON'}
+            </button>
           )}
         </div>
       ) : (

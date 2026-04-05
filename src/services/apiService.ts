@@ -13,13 +13,13 @@ export async function uploadImage(blob: Blob): Promise<string> {
   return result.url;
 }
 
-export async function parseCrosswordImage(blobUrl: string): Promise<ParseResponse> {
+export async function parseCrosswordImage(blobUrl: string, useLocalFile = false): Promise<ParseResponse> {
   const response = await fetch('/api/parse-crossword', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ blobUrl })
+    body: JSON.stringify({ blobUrl, useLocalFile })
   });
 
   if (!response.ok) {

@@ -82,7 +82,7 @@ function devApiPlugin(): Plugin {
           return
         }
 
-        let parsed: { blobUrl?: string }
+        let parsed: { blobUrl?: string; useLocalFile?: boolean }
         try {
           parsed = JSON.parse(await readBody(req))
         } catch {
@@ -91,15 +91,15 @@ function devApiPlugin(): Plugin {
           return
         }
 
-        const { blobUrl } = parsed
+        const { blobUrl, useLocalFile } = parsed
 
-        if (!blobUrl) {
+        if (!useLocalFile && !blobUrl) {
           res.writeHead(400, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({ error: 'No blobUrl provided' }))
           return
         }
 
-        if (!landingaiApiKey) {
+        if (!useLocalFile && !landingaiApiKey) {
           res.writeHead(500, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({
             error: 'LANDINGAI_API_KEY not configured',
@@ -108,52 +108,64 @@ function devApiPlugin(): Plugin {
           return
         }
 
+        let data: Record<string, unknown>
+
         try {
-          // Fetch image from Vercel Blob Storage
-          console.log('[dev-api] Fetching image from blob:', blobUrl)
-          const imageResponse = await fetch(blobUrl)
-          if (!imageResponse.ok) {
-            res.writeHead(400, { 'Content-Type': 'application/json' })
-            res.end(JSON.stringify({ error: 'Failed to fetch image from blob storage' }))
-            return
-          }
-          const buffer = Buffer.from(await imageResponse.arrayBuffer())
+          if (useLocalFile) {
+            // Load from local JSON file for debugging
+            const { readFileSync } = await import('node:fs')
+            const { join } = await import('node:path')
+            const filePath = join(process.cwd(), 'landingai-response.json')
+            const fileContent = readFileSync(filePath, 'utf-8')
+            data = JSON.parse(fileContent)
+            console.log('[dev-api] Using local landingai-response.json file')
+          } else {
+            // Fetch image from Vercel Blob Storage
+            console.log('[dev-api] Fetching image from blob:', blobUrl)
+            const imageResponse = await fetch(blobUrl!)
+            if (!imageResponse.ok) {
+              res.writeHead(400, { 'Content-Type': 'application/json' })
+              res.end(JSON.stringify({ error: 'Failed to fetch image from blob storage' }))
+              return
+            }
+            const buffer = Buffer.from(await imageResponse.arrayBuffer())
 
-          // Call LandingAI API
-          const formData = new FormData()
-          const blob = new Blob([buffer], { type: 'image/jpeg' })
-          formData.append('document', blob, 'crossword.jpg')
-          formData.append('model', 'dpt-2-latest')
+            // Call LandingAI API
+            const formData = new FormData()
+            const blob = new Blob([buffer], { type: 'image/jpeg' })
+            formData.append('document', blob, 'crossword.jpg')
+            formData.append('model', 'dpt-2-latest')
 
-          console.log('[dev-api] Calling LandingAI API...')
-          const response = await fetch('https://api.va.landing.ai/v1/ade/parse', {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${landingaiApiKey}`
-            },
-            body: formData
-          })
+            console.log('[dev-api] Calling LandingAI API...')
+            const response = await fetch('https://api.va.landing.ai/v1/ade/parse', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${landingaiApiKey}`
+              },
+              body: formData
+            })
 
-          if (!response.ok) {
-            const errorText = await response.text()
-            console.error('[dev-api] LandingAI error:', errorText)
-            res.writeHead(response.status, { 'Content-Type': 'application/json' })
-            res.end(JSON.stringify({
-              error: 'Failed to process image',
-              details: errorText
-            }))
-            return
-          }
+            if (!response.ok) {
+              const errorText = await response.text()
+              console.error('[dev-api] LandingAI error:', errorText)
+              res.writeHead(response.status, { 'Content-Type': 'application/json' })
+              res.end(JSON.stringify({
+                error: 'Failed to process image',
+                details: errorText
+              }))
+              return
+            }
 
-          const data = await response.json()
-          console.log('[dev-api] LandingAI response received, transforming...')
+            data = await response.json() as Record<string, unknown>
+            console.log('[dev-api] LandingAI response received, transforming...')
 
-          // Save raw response for debugging
-          try {
-            writeFileSync('landingai-response.json', JSON.stringify(data, null, 2))
-            console.log('[dev-api] Raw response saved to landingai-response.json')
-          } catch (e) {
-            console.warn('[dev-api] Could not save response file:', e)
+            // Save raw response for debugging
+            try {
+              writeFileSync('landingai-response.json', JSON.stringify(data, null, 2))
+              console.log('[dev-api] Raw response saved to landingai-response.json')
+            } catch (e) {
+              console.warn('[dev-api] Could not save response file:', e)
+            }
           }
 
           // Transform the response
@@ -451,24 +463,30 @@ function parseCluesFromText(textChunks: Array<{ markdown: string }>) {
   const acrossClues: Record<string, string> = {}
   const downClues: Record<string, string> = {}
 
-  textChunks.forEach(chunk => {
+  let globalDirection: 'across' | 'down' | null = null
+  let lastClueNum: string | null = null
+  let lastClueDirection: 'across' | 'down' | null = null
+
+  textChunks.forEach((chunk, chunkIndex) => {
     const md = chunk.markdown || ''
     const lines = md.split('\n').filter((line: string) => line.trim())
 
-    let currentDirection: 'across' | 'down' | null = null
-    let lastClueNum: string | null = null
-    let lastClueDirection: 'across' | 'down' | null = null
+    let currentDirection = globalDirection
 
     lines.forEach((line: string) => {
       const trimmed = line.trim()
 
       // Check if this line indicates direction (handles "ACROSS", "## DOWN (↓)", etc.)
       if (/\bacross\b/i.test(trimmed) && !/^\d/.test(trimmed)) {
+        console.log(`[dev-api] Detected direction switch to ACROSS at chunk ${chunkIndex}`)
         currentDirection = 'across'
+        globalDirection = 'across'
         return
       }
       if (/\bdown\b/i.test(trimmed) && !/^\d/.test(trimmed)) {
+        console.log(`[dev-api] Detected direction switch to DOWN at chunk ${chunkIndex}`)
         currentDirection = 'down'
+        globalDirection = 'down'
         return
       }
 
@@ -476,15 +494,22 @@ function parseCluesFromText(textChunks: Array<{ markdown: string }>) {
 
       // Parse clue: "1 Clue text here" or "1. Clue text here"
       const clueMatch = trimmed.match(/^(\d+)\.?\s+(.+)$/)
-      if (clueMatch && currentDirection) {
-        const [, num, clueText] = clueMatch
-        if (currentDirection === 'across') {
-          acrossClues[num] = clueText
-        } else {
-          downClues[num] = clueText
+      if (clueMatch) {
+        // Only process if we have a direction
+        if (!currentDirection && globalDirection) {
+          currentDirection = globalDirection
         }
-        lastClueNum = num
-        lastClueDirection = currentDirection
+
+        if (currentDirection) {
+          const [, num, clueText] = clueMatch
+          if (currentDirection === 'across') {
+            acrossClues[num] = clueText
+          } else {
+            downClues[num] = clueText
+          }
+          lastClueNum = num
+          lastClueDirection = currentDirection
+        }
       } else if (lastClueNum && lastClueDirection && !clueMatch) {
         if (lastClueDirection === 'across') {
           acrossClues[lastClueNum] += ' ' + trimmed
@@ -494,6 +519,8 @@ function parseCluesFromText(textChunks: Array<{ markdown: string }>) {
       }
     })
   })
+
+  console.log('[dev-api] parseCluesFromText: Found across clues:', Object.keys(acrossClues), 'down clues:', Object.keys(downClues))
 
   return { acrossClues, downClues }
 }

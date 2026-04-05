@@ -21,49 +21,68 @@ export default async function handler(
   }
 
   try {
-    const { blobUrl } = req.body;
+    const { blobUrl, useLocalFile } = req.body;
 
-    if (!blobUrl) {
-      return res.status(400).json({ error: 'No blobUrl provided' });
-    }
+    let data;
 
-    // Fetch image from Vercel Blob Storage
-    const imageResponse = await fetch(blobUrl);
-    if (!imageResponse.ok) {
-      return res.status(400).json({ error: 'Failed to fetch image from blob storage' });
-    }
-    const buffer = Buffer.from(await imageResponse.arrayBuffer());
+    // If useLocalFile is true, read from local JSON file for debugging
+    if (useLocalFile) {
+      const fs = require('fs');
+      const path = require('path');
+      const filePath = path.join(process.cwd(), 'landingai-response.json');
+      const fileContent = fs.readFileSync(filePath, 'utf-8');
+      data = JSON.parse(fileContent);
+      console.error('[debug] Using local landingai-response.json file');
+    } else {
+      if (!blobUrl) {
+        return res.status(400).json({ error: 'No blobUrl provided' });
+      }
 
-    // Call LandingAI API
-    const formData = new FormData();
-    const blob = new Blob([buffer], { type: 'image/jpeg' });
-    formData.append('document', blob, 'crossword.jpg');
-    formData.append('model', 'dpt-2-latest');
+      console.error('[dev-api] Fetching image from blob:', blobUrl);
 
-    const response = await fetch('https://api.va.landing.ai/v1/ade/parse', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${process.env.LANDINGAI_API_KEY}`
-      },
-      body: formData
-    });
+      // Fetch image from Vercel Blob Storage
+      const imageResponse = await fetch(blobUrl);
+      if (!imageResponse.ok) {
+        return res.status(400).json({ error: 'Failed to fetch image from blob storage' });
+      }
+      const buffer = Buffer.from(await imageResponse.arrayBuffer());
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('LandingAI error:', errorText);
-      return res.status(response.status).json({
-        error: 'Failed to process image',
-        details: errorText
+      console.error('[dev-api] Calling LandingAI API...');
+
+      // Call LandingAI API
+      const formData = new FormData();
+      const blob = new Blob([buffer], { type: 'image/jpeg' });
+      formData.append('document', blob, 'crossword.jpg');
+      formData.append('model', 'dpt-2-latest');
+
+      const response = await fetch('https://api.va.landing.ai/v1/ade/parse', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.LANDINGAI_API_KEY}`
+        },
+        body: formData
       });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('LandingAI error:', errorText);
+        return res.status(response.status).json({
+          error: 'Failed to process image',
+          details: errorText
+        });
+      }
+
+      data = await response.json();
+      console.error('[dev-api] LandingAI response received, transforming...');
     }
 
-    const data = await response.json();
-
-    // Clean up: delete the blob now that we've processed it
-    try {
-      await del(blobUrl);
-    } catch (delError) {
-      console.warn('Failed to delete blob (non-critical):', delError);
+    // Clean up: delete the blob now that we've processed it (only if not using local file)
+    if (!useLocalFile && blobUrl) {
+      try {
+        await del(blobUrl);
+      } catch (delError) {
+        console.warn('Failed to delete blob (non-critical):', delError);
+      }
     }
 
     // Transform LandingAI response to our crossword format
@@ -104,15 +123,24 @@ function transformLandingAIResponse(data: Record<string, unknown>): TransformedR
   const textChunks = chunks?.filter((chunk) => chunk.type === 'text') || [];
 
   if (!gridChunk) {
-    throw new Error('No crossword grid found in image');
+    // If no grid found, use a default empty grid
+    console.warn('[transformLandingAIResponse] No grid chunk found, using default grid');
   }
 
   // Parse grid data based on chunk type
   let gridData;
   if (tableChunk) {
     gridData = parseTableMarkdown(tableChunk.markdown, grounding || {});
+  } else if (figureChunk) {
+    gridData = parseFigureDescription(figureChunk.markdown);
   } else {
-    gridData = parseFigureDescription(figureChunk!.markdown);
+    // No grid found, use default empty grid
+    gridData = {
+      gridSize: [0, 0],
+      blackCells: [],
+      clueNumbers: {},
+      preFilledLetters: {}
+    };
   }
 
   // Parse clues from text chunks
@@ -353,24 +381,30 @@ function parseCluesFromText(textChunks: Array<{ markdown: string }>): {
   const acrossClues: Record<string, string> = {};
   const downClues: Record<string, string> = {};
 
-  textChunks.forEach(chunk => {
+  let globalDirection: 'across' | 'down' | null = null;
+  let lastClueNum: string | null = null;
+  let lastClueDirection: 'across' | 'down' | null = null;
+
+  textChunks.forEach((chunk, chunkIndex) => {
     const md = chunk.markdown || '';
     const lines = md.split('\n').filter((line: string) => line.trim());
 
-    let currentDirection: 'across' | 'down' | null = null;
-    let lastClueNum: string | null = null;
-    let lastClueDirection: 'across' | 'down' | null = null;
+    let currentDirection = globalDirection;
 
     lines.forEach((line: string) => {
       const trimmed = line.trim();
 
       // Check if this line indicates direction (handles "ACROSS", "## DOWN (↓)", etc.)
       if (/\bacross\b/i.test(trimmed) && !/^\d/.test(trimmed)) {
+        console.log(`[parseCluesFromText] Detected direction switch to ACROSS at chunk ${chunkIndex}`);
         currentDirection = 'across';
+        globalDirection = 'across';
         return;
       }
       if (/\bdown\b/i.test(trimmed) && !/^\d/.test(trimmed)) {
+        console.log(`[parseCluesFromText] Detected direction switch to DOWN at chunk ${chunkIndex}`);
         currentDirection = 'down';
+        globalDirection = 'down';
         return;
       }
 
@@ -381,15 +415,22 @@ function parseCluesFromText(textChunks: Array<{ markdown: string }>): {
 
       // Parse clue: "1 Clue text here" or "1. Clue text here"
       const clueMatch = trimmed.match(/^(\d+)\.?\s+(.+)$/);
-      if (clueMatch && currentDirection) {
-        const [, num, clueText] = clueMatch;
-        if (currentDirection === 'across') {
-          acrossClues[num] = clueText;
-        } else {
-          downClues[num] = clueText;
+      if (clueMatch) {
+        // Only process if we have a direction
+        if (!currentDirection && globalDirection) {
+          currentDirection = globalDirection;
         }
-        lastClueNum = num;
-        lastClueDirection = currentDirection;
+
+        if (currentDirection) {
+          const [, num, clueText] = clueMatch;
+          if (currentDirection === 'across') {
+            acrossClues[num] = clueText;
+          } else {
+            downClues[num] = clueText;
+          }
+          lastClueNum = num;
+          lastClueDirection = currentDirection;
+        }
       } else if (lastClueNum && lastClueDirection && !clueMatch) {
         // Handle multi-line clues: append to the last clue
         if (lastClueDirection === 'across') {

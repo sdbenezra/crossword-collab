@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { updateCell, updateCursor, removeCursor } from '../services/puzzleService';
 import type { PuzzleData } from '../types/puzzle';
 
-type EditMode = 'none' | 'blackCells' | 'numbers';
+type EditMode = 'none' | 'blackCells' | 'numbers' | 'gridSize';
 
 interface CrosswordGridProps {
   puzzle: PuzzleData;

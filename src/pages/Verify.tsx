@@ -6,7 +6,7 @@ import { createPuzzle } from '../services/puzzleService';
 import { useAuth } from '../hooks/useAuth';
 import type { PuzzleData, ParseResponse } from '../types/puzzle';
 
-type EditMode = 'none' | 'blackCells' | 'numbers';
+type EditMode = 'none' | 'blackCells' | 'numbers' | 'gridSize';
 
 export default function Verify() {
   const navigate = useNavigate();
@@ -63,6 +63,30 @@ export default function Verify() {
     });
   }, [puzzleData?.clueNumbers]);
 
+  const handleGridSizeChange = useCallback((width: number, height: number) => {
+    setPuzzleData(prev => {
+      if (!prev) return prev;
+      // Filter out blackCells that are outside the new grid bounds
+      const newBlackCells = prev.blackCells.filter(
+        ([row, col]) => row < height && col < width
+      );
+      // Filter out clueNumbers that are outside the new grid bounds
+      const newClueNumbers: Record<string, number> = {};
+      Object.entries(prev.clueNumbers).forEach(([key, num]) => {
+        const [row, col] = key.split(',').map(Number);
+        if (row < height && col < width) {
+          newClueNumbers[key] = num;
+        }
+      });
+      return {
+        ...prev,
+        gridSize: [width, height],
+        blackCells: newBlackCells,
+        clueNumbers: newClueNumbers
+      };
+    });
+  }, []);
+
   const handleConfirm = async () => {
     if (!puzzleData || !user) return;
 
@@ -112,7 +136,7 @@ export default function Verify() {
 
         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
           <p className="text-sm text-yellow-800">
-            Review the extracted puzzle below. Use the edit buttons to correct black squares or clue numbers if needed.
+            Review the extracted puzzle below. Use the edit buttons to correct the grid size, black squares, or clue numbers if needed.
           </p>
         </div>
 
@@ -137,20 +161,78 @@ export default function Verify() {
           >
             {editMode === 'numbers' ? 'Done Editing Numbers' : 'Edit Clue Numbers'}
           </button>
+          <button
+            onClick={() => setEditMode(m => m === 'gridSize' ? 'none' : 'gridSize')}
+            className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
+              editMode === 'gridSize'
+                ? 'bg-blue-600 text-white'
+                : 'bg-gray-200 hover:bg-gray-300 text-gray-700'
+            }`}
+          >
+            {editMode === 'gridSize' ? 'Done Editing Grid' : 'Edit Grid Size'}
+          </button>
         </div>
 
-        <div className="grid lg:grid-cols-2 gap-8 mb-8">
-          <div className="bg-white rounded-lg shadow p-6">
+        {editMode === 'gridSize' && (
+          <div className="bg-white rounded-lg shadow p-6 mb-6">
+            <h3 className="text-lg font-semibold mb-4">Set Grid Dimensions</h3>
+            <div className="flex gap-4 items-end">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Width (columns)
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max="50"
+                  value={puzzleData.gridSize[0]}
+                  onChange={(e) => {
+                    const newWidth = Math.max(1, parseInt(e.target.value) || 1);
+                    handleGridSizeChange(newWidth, puzzleData.gridSize[1]);
+                  }}
+                  className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 w-24"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Height (rows)
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max="50"
+                  value={puzzleData.gridSize[1]}
+                  onChange={(e) => {
+                    const newHeight = Math.max(1, parseInt(e.target.value) || 1);
+                    handleGridSizeChange(puzzleData.gridSize[0], newHeight);
+                  }}
+                  className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 w-24"
+                />
+              </div>
+              <button
+                onClick={() => setEditMode('none')}
+                className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold transition-colors"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className="mb-8">
+          <div className="bg-white rounded-lg shadow p-6 mb-8">
             <h2 className="text-xl font-bold mb-4">Grid ({tempPuzzle.gridSize[0]}x{tempPuzzle.gridSize[1]})</h2>
-            <div className="flex justify-center overflow-auto">
-              <CrosswordGrid
-                puzzle={tempPuzzle}
-                userId={user?.uid || ''}
-                editable={false}
-                editMode={editMode}
-                onToggleBlackCell={handleToggleBlackCell}
-                onEditClueNumber={handleEditClueNumber}
-              />
+            <div className="overflow-auto max-h-96 border border-gray-200 rounded-lg" style={{ minHeight: '400px' }}>
+              <div className="inline-flex p-4">
+                <CrosswordGrid
+                  puzzle={tempPuzzle}
+                  userId={user?.uid || ''}
+                  editable={false}
+                  editMode={editMode}
+                  onToggleBlackCell={handleToggleBlackCell}
+                  onEditClueNumber={handleEditClueNumber}
+                />
+              </div>
             </div>
           </div>
 
