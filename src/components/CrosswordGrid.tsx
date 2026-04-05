@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo, forwardRef, useImperativeHandle } from 'react';
 import { updateCell, updateCursor, removeCursor } from '../services/puzzleService';
 import type { PuzzleData } from '../types/puzzle';
 
@@ -13,7 +13,10 @@ interface CrosswordGridProps {
   onEditClueNumber?: (row: number, col: number) => void;
 }
 
-export function CrosswordGrid({ puzzle, userId, editable = true, editMode = 'none', onToggleBlackCell, onEditClueNumber }: CrosswordGridProps) {
+export const CrosswordGrid = forwardRef<
+  { focusClue: (clueNum: string, direction: 'across' | 'down') => void },
+  CrosswordGridProps
+>(function CrosswordGrid({ puzzle, userId, editable = true, editMode = 'none', onToggleBlackCell, onEditClueNumber }, ref) {
   const [selectedCell, setSelectedCell] = useState<{ row: number; col: number } | null>(null);
   const [direction, setDirection] = useState<'across' | 'down'>('across');
   const gridRef = useRef<HTMLDivElement>(null);
@@ -22,6 +25,26 @@ export function CrosswordGrid({ puzzle, userId, editable = true, editMode = 'non
   const isBlackCell = useCallback((row: number, col: number) => {
     return puzzle.blackCells?.some(([r, c]) => r === row && c === col);
   }, [puzzle.blackCells]);
+
+  // Expose focusClue method via ref
+  useImperativeHandle(ref, () => ({
+    focusClue: (clueNum: string, direction: 'across' | 'down') => {
+      // Find the starting cell for this clue
+      const startKey = Object.entries(puzzle.clueNumbers || {}).find(
+        ([_, num]) => num === Number(clueNum)
+      )?.[0];
+
+      if (startKey) {
+        const [row, col] = startKey.split(',').map(Number);
+        setSelectedCell({ row, col });
+        setDirection(direction);
+        // Focus the hidden input so keyboard input works immediately
+        if (hiddenInputRef.current) {
+          hiddenInputRef.current.focus();
+        }
+      }
+    }
+  }), [puzzle.clueNumbers]);
 
   useEffect(() => {
     if (selectedCell && editable && puzzle.id) {
@@ -286,25 +309,6 @@ export function CrosswordGrid({ puzzle, userId, editable = true, editMode = 'non
           Click a white cell to set or remove its clue number
         </div>
       )}
-      {editable && editMode === 'none' && (
-        <div className="mt-3 flex items-center justify-center gap-3">
-          <span className={`px-3 py-1 rounded-full text-sm font-semibold ${
-            direction === 'across'
-              ? 'bg-blue-600 text-white'
-              : 'bg-gray-200 text-gray-500'
-          }`}>
-            Across →
-          </span>
-          <span className={`px-3 py-1 rounded-full text-sm font-semibold ${
-            direction === 'down'
-              ? 'bg-blue-600 text-white'
-              : 'bg-gray-200 text-gray-500'
-          }`}>
-            Down ↓
-          </span>
-          <span className="text-xs text-gray-400 ml-1">(Tab to switch)</span>
-        </div>
-      )}
     </div>
   );
-}
+});

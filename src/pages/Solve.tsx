@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { CrosswordGrid } from '../components/CrosswordGrid';
 import { CluesList } from '../components/CluesList';
@@ -12,6 +12,11 @@ export default function Solve() {
   const { user } = useAuth();
   const { puzzle, loading, error } = usePuzzle(id);
   const [showShare, setShowShare] = useState(false);
+  const gridRef = useRef<{ focusClue: (clueNum: string, direction: 'across' | 'down') => void }>(null);
+
+  const handleClueClick = (clueNum: string, direction: 'across' | 'down') => {
+    gridRef.current?.focusClue(clueNum, direction);
+  };
 
   if (loading) {
     return (
@@ -80,11 +85,11 @@ export default function Solve() {
       <div className="max-w-7xl mx-auto px-4 py-8">
         <div className="grid lg:grid-cols-[auto_1fr] gap-8">
           <div className="bg-white rounded-lg shadow p-6 flex justify-center overflow-auto">
-            <CrosswordGrid puzzle={puzzle} userId={user.uid} />
+            <CrosswordGrid ref={gridRef} puzzle={puzzle} userId={user.uid} />
           </div>
 
           <div className="bg-white rounded-lg shadow p-6 overflow-auto max-h-[80vh]">
-            <CluesList puzzle={puzzle} />
+            <CluesList puzzle={puzzle} onClueClick={handleClueClick} />
           </div>
         </div>
       </div>

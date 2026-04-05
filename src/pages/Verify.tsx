@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { CrosswordGrid } from '../components/CrosswordGrid';
 import { CluesList } from '../components/CluesList';
@@ -14,6 +14,11 @@ export default function Verify() {
   const [puzzleData, setPuzzleData] = useState<ParseResponse | null>(null);
   const [saving, setSaving] = useState(false);
   const [editMode, setEditMode] = useState<EditMode>('none');
+  const gridRef = useRef<{ focusClue: (clueNum: string, direction: 'across' | 'down') => void }>(null);
+
+  const handleClueClick = (clueNum: string, direction: 'across' | 'down') => {
+    gridRef.current?.focusClue(clueNum, direction);
+  };
 
   useEffect(() => {
     const stored = sessionStorage.getItem('extractedPuzzle');
@@ -225,6 +230,7 @@ export default function Verify() {
             <div className="overflow-auto max-h-96 border border-gray-200 rounded-lg" style={{ minHeight: '400px' }}>
               <div className="inline-flex p-4">
                 <CrosswordGrid
+                  ref={gridRef}
                   puzzle={tempPuzzle}
                   userId={user?.uid || ''}
                   editable={false}
@@ -238,7 +244,7 @@ export default function Verify() {
 
           <div className="bg-white rounded-lg shadow p-6">
             <h2 className="text-xl font-bold mb-4">Clues</h2>
-            <CluesList puzzle={tempPuzzle} />
+            <CluesList puzzle={tempPuzzle} onClueClick={handleClueClick} />
           </div>
         </div>
 
